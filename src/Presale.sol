@@ -70,6 +70,8 @@ contract Presale is Ownable {
     function buyWithStableCoin(uint256 _amount) external {
         require(!blacklistedAddresses[msg.sender], "User is blacklisted");
         require(_amount <= maxSellingAmount, "Amount exceeds max selling amount");
+        require(block.timestamp >= startTime, "Presale has not started");
+        require(block.timestamp <= endTime, "Presale has ended");
         // Logic for token transfer and allocation goes here
     }
 
