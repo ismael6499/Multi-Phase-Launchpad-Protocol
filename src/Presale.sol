@@ -6,6 +6,7 @@ import "../lib/openzeppelin-contracts/contracts/access/Ownable.sol";
 import "../lib/openzeppelin-contracts/contracts/token/ERC20/ERC20.sol";
 import "../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import "../lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
+import "./interfaces/IAggregator.sol";
 
 contract Presale is Ownable {
     using SafeERC20 for IERC20;
@@ -13,6 +14,7 @@ contract Presale is Ownable {
     address public immutable usdtAddress;
     address public immutable usdcAddress;
     address public immutable fundsReceiverAddress;
+    address public dataFeedAddress;
     uint256 public maxSellingAmount;
     uint256[][3] public phases;
     uint256 public startTime;
@@ -38,6 +40,7 @@ contract Presale is Ownable {
         address _usdtAddress, 
         address _usdcAddress, 
         address _fundsReceiverAddress, 
+        address _dataFeedAddress,
         uint256 _maxSellingAmount, 
         uint256[][3] memory _phases,
         uint256 _startTime,
@@ -50,6 +53,7 @@ contract Presale is Ownable {
         phases = _phases;
         startTime = _startTime;
         endTime = _endTime;
+        dataFeedAddress = _dataFeedAddress;
         require(startTime < endTime, "Invalid time range");
     }
     
@@ -101,6 +105,30 @@ contract Presale is Ownable {
         IERC20(_stableCoinAddress).safeTransferFrom(msg.sender, fundsReceiverAddress, _amount);
 
         emit TokenBought(msg.sender, tokenAmountToReceive);
+    }
+
+    function buyWithEther() external payable {
+        require(!blacklistedAddresses[msg.sender], "User is blacklisted");
+        require(block.timestamp >= startTime, "Presale has not started");
+        require(block.timestamp <= endTime, "Presale has ended");
+        uint256 etherPrice = getEtherPrice();
+        uint256 usdValue = msg.value * etherPrice / 1e18;
+        uint256 tokenAmountToReceive = usdValue * 1e6 / phases[currentPhase][1];
+        require(tokenAmountToReceive > 0, "Invalid amount");
+        checkCurrentPhase(tokenAmountToReceive);
+        totalSold += tokenAmountToReceive;
+        require(totalSold <= maxSellingAmount, "Amount exceeds max selling amount");
+        
+        userTokenBalance[msg.sender] += tokenAmountToReceive;
+        (bool success, ) = fundsReceiverAddress.call{value: msg.value}("");
+        require(success, "ETH transfer failed");
+
+        emit TokenBought(msg.sender, tokenAmountToReceive);
+    }
+
+    function getEtherPrice() public view returns (uint256) {
+        (, int256 answer, , , ) = IAggregator(dataFeedAddress).latestRoundData();
+        return uint256(answer) * 1e10;
     }
 
     /**
