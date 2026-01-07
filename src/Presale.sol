@@ -20,6 +20,7 @@ contract Presale is Ownable {
     uint256 public startTime;
     uint256 public endTime;
     uint256 public currentPhase;
+    address public saleTokenAddress;
     uint256 public totalSold;
     mapping(address => bool) public blacklistedAddresses;
     mapping(address => uint256) public userTokenBalance;
@@ -37,6 +38,7 @@ contract Presale is Ownable {
      * @param _endTime The timestamp when the presale ends
      */
     constructor(
+        address _saleTokenAddress,
         address _usdtAddress, 
         address _usdcAddress, 
         address _fundsReceiverAddress, 
@@ -46,6 +48,7 @@ contract Presale is Ownable {
         uint256 _startTime,
         uint256 _endTime
     ) Ownable(msg.sender) {
+        saleTokenAddress = _saleTokenAddress;
         usdtAddress = _usdtAddress;
         usdcAddress = _usdcAddress;
         fundsReceiverAddress = _fundsReceiverAddress;
@@ -55,6 +58,20 @@ contract Presale is Ownable {
         endTime = _endTime;
         dataFeedAddress = _dataFeedAddress;
         require(startTime < endTime, "Invalid time range");
+        IERC20(saleTokenAddress).safeTransferFrom(msg.sender, address(this), maxSellingAmount);
+    }
+
+    function getEtherPrice() public view returns (uint256) {
+        (, int256 answer, , , ) = IAggregator(dataFeedAddress).latestRoundData();
+        return uint256(answer) * 1e10;
+    }
+
+    function claimTokens() external {
+        require(block.timestamp > endTime, "Presale has not ended");
+        uint256 amount = userTokenBalance[msg.sender];
+        require(amount > 0, "No tokens to claim");
+        delete userTokenBalance[msg.sender];
+        IERC20(saleTokenAddress).safeTransfer(msg.sender, amount);
     }
     
     /**
@@ -124,11 +141,6 @@ contract Presale is Ownable {
         require(success, "ETH transfer failed");
 
         emit TokenBought(msg.sender, tokenAmountToReceive);
-    }
-
-    function getEtherPrice() public view returns (uint256) {
-        (, int256 answer, , , ) = IAggregator(dataFeedAddress).latestRoundData();
-        return uint256(answer) * 1e10;
     }
 
     /**
