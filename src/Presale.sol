@@ -3,6 +3,7 @@
 pragma solidity 0.8.24;
 
 import "../lib/openzeppelin-contracts/contracts/access/Ownable.sol";
+import "../lib/openzeppelin-contracts/contracts/token/ERC20/ERC20.sol";
 import "../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import "../lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 
@@ -16,7 +17,12 @@ contract Presale is Ownable {
     uint256[][3] public phases;
     uint256 public startTime;
     uint256 public endTime;
+    uint256 public currentPhase;
+    uint256 public totalSold;
     mapping(address => bool) public blacklistedAddresses;
+    mapping(address => uint256) public userTokenBalance;
+
+    event TokenBought(address indexed user, uint256 amount);
 
     /**
      * @notice Initializes the contract with the initial configuration
@@ -63,16 +69,38 @@ contract Presale is Ownable {
         blacklistedAddresses[_user] = false;
     } 
 
+    function checkCurrentPhase(uint256 _amount) private {
+        while (currentPhase < 2) {
+            if (block.timestamp > phases[currentPhase][2] || totalSold + _amount > phases[currentPhase][0]) {
+                currentPhase++;
+            } else {
+                break;
+            }
+        }
+    }
+
     /**
      * @notice Allows users to buy tokens using stablecoins
+     * @param _stableCoinAddress The address of the stablecoin to use
      * @param _amount The amount of stablecoins to spend
      */
-    function buyWithStableCoin(uint256 _amount) external {
+    function buyWithStableCoin(address _stableCoinAddress, uint256 _amount) external {
         require(!blacklistedAddresses[msg.sender], "User is blacklisted");
-        require(_amount <= maxSellingAmount, "Amount exceeds max selling amount");
         require(block.timestamp >= startTime, "Presale has not started");
         require(block.timestamp <= endTime, "Presale has ended");
-        // Logic for token transfer and allocation goes here
+        require(_stableCoinAddress == usdtAddress || _stableCoinAddress == usdcAddress, "Invalid stablecoin");
+        uint256 decimals = ERC20(_stableCoinAddress).decimals();
+        require(decimals <= 18, "Token has too many decimals");
+        uint256 tokenAmountToReceive = _amount * 10**(24 - decimals) / phases[currentPhase][1];
+        require(tokenAmountToReceive > 0, "Invalid amount");
+        checkCurrentPhase(tokenAmountToReceive);
+        totalSold += tokenAmountToReceive;
+        require(totalSold <= maxSellingAmount, "Amount exceeds max selling amount");
+        
+        userTokenBalance[msg.sender] += tokenAmountToReceive;
+        IERC20(_stableCoinAddress).safeTransferFrom(msg.sender, fundsReceiverAddress, _amount);
+
+        emit TokenBought(msg.sender, tokenAmountToReceive);
     }
 
     /**
