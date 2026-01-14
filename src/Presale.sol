@@ -27,6 +27,18 @@ contract Presale is Ownable {
 
     event TokenBought(address indexed user, uint256 amount);
 
+    error InvalidTimeRange();
+    error PresaleNotEnded();
+    error PresaleNotStarted();
+    error PresaleEnded();
+    error NoTokensToClaim();
+    error UserBlacklisted();
+    error InvalidStablecoin();
+    error TokenDecimalsTooHigh();
+    error InvalidAmount();
+    error AmountExceedsMaxSellingAmount();
+    error ETHTransferFailed();
+
     /**
      * @notice Initializes the contract with the initial configuration
      * @param _usdtAddress The address of the USDT token
@@ -57,19 +69,14 @@ contract Presale is Ownable {
         startTime = _startTime;
         endTime = _endTime;
         dataFeedAddress = _dataFeedAddress;
-        require(startTime < endTime, "Invalid time range");
+        if (startTime >= endTime) revert InvalidTimeRange();
         IERC20(saleTokenAddress).safeTransferFrom(msg.sender, address(this), maxSellingAmount);
     }
 
-    function getEtherPrice() public view returns (uint256) {
-        (, int256 answer, , , ) = IAggregator(dataFeedAddress).latestRoundData();
-        return uint256(answer) * 1e10;
-    }
-
     function claimTokens() external {
-        require(block.timestamp > endTime, "Presale has not ended");
+        if (block.timestamp <= endTime) revert PresaleNotEnded();
         uint256 amount = userTokenBalance[msg.sender];
-        require(amount > 0, "No tokens to claim");
+        if (amount == 0) revert NoTokensToClaim();
         delete userTokenBalance[msg.sender];
         IERC20(saleTokenAddress).safeTransfer(msg.sender, amount);
     }
@@ -90,33 +97,23 @@ contract Presale is Ownable {
         blacklistedAddresses[_user] = false;
     } 
 
-    function checkCurrentPhase(uint256 _amount) private {
-        while (currentPhase < 2) {
-            if (block.timestamp > phases[currentPhase][2] || totalSold + _amount > phases[currentPhase][0]) {
-                currentPhase++;
-            } else {
-                break;
-            }
-        }
-    }
-
     /**
      * @notice Allows users to buy tokens using stablecoins
      * @param _stableCoinAddress The address of the stablecoin to use
      * @param _amount The amount of stablecoins to spend
      */
     function buyWithStableCoin(address _stableCoinAddress, uint256 _amount) external {
-        require(!blacklistedAddresses[msg.sender], "User is blacklisted");
-        require(block.timestamp >= startTime, "Presale has not started");
-        require(block.timestamp <= endTime, "Presale has ended");
-        require(_stableCoinAddress == usdtAddress || _stableCoinAddress == usdcAddress, "Invalid stablecoin");
+        if (blacklistedAddresses[msg.sender]) revert UserBlacklisted();
+        if (block.timestamp < startTime) revert PresaleNotStarted();
+        if (block.timestamp > endTime) revert PresaleEnded();
+        if (_stableCoinAddress != usdtAddress && _stableCoinAddress != usdcAddress) revert InvalidStablecoin();
         uint256 decimals = ERC20(_stableCoinAddress).decimals();
-        require(decimals <= 18, "Token has too many decimals");
+        if (decimals > 18) revert TokenDecimalsTooHigh();
         uint256 tokenAmountToReceive = _amount * 10**(24 - decimals) / phases[currentPhase][1];
-        require(tokenAmountToReceive > 0, "Invalid amount");
+        if (tokenAmountToReceive == 0) revert InvalidAmount();
         checkCurrentPhase(tokenAmountToReceive);
         totalSold += tokenAmountToReceive;
-        require(totalSold <= maxSellingAmount, "Amount exceeds max selling amount");
+        if (totalSold > maxSellingAmount) revert AmountExceedsMaxSellingAmount();
         
         userTokenBalance[msg.sender] += tokenAmountToReceive;
         IERC20(_stableCoinAddress).safeTransferFrom(msg.sender, fundsReceiverAddress, _amount);
@@ -125,20 +122,20 @@ contract Presale is Ownable {
     }
 
     function buyWithEther() external payable {
-        require(!blacklistedAddresses[msg.sender], "User is blacklisted");
-        require(block.timestamp >= startTime, "Presale has not started");
-        require(block.timestamp <= endTime, "Presale has ended");
+        if (blacklistedAddresses[msg.sender]) revert UserBlacklisted();
+        if (block.timestamp < startTime) revert PresaleNotStarted();
+        if (block.timestamp > endTime) revert PresaleEnded();
         uint256 etherPrice = getEtherPrice();
         uint256 usdValue = msg.value * etherPrice / 1e18;
         uint256 tokenAmountToReceive = usdValue * 1e6 / phases[currentPhase][1];
-        require(tokenAmountToReceive > 0, "Invalid amount");
+        if (tokenAmountToReceive == 0) revert InvalidAmount();
         checkCurrentPhase(tokenAmountToReceive);
         totalSold += tokenAmountToReceive;
-        require(totalSold <= maxSellingAmount, "Amount exceeds max selling amount");
+        if (totalSold > maxSellingAmount) revert AmountExceedsMaxSellingAmount();
         
         userTokenBalance[msg.sender] += tokenAmountToReceive;
         (bool success, ) = fundsReceiverAddress.call{value: msg.value}("");
-        require(success, "ETH transfer failed");
+        if (!success) revert ETHTransferFailed();
 
         emit TokenBought(msg.sender, tokenAmountToReceive);
     }
@@ -158,7 +155,22 @@ contract Presale is Ownable {
     function emergencyETHWithdraw() external onlyOwner {
         uint256 balance = address(this).balance;
         (bool success, ) = msg.sender.call{value: balance}("");
-        require(success, "ETH transfer failed");
+        if (!success) revert ETHTransferFailed();
+    }
+
+    function getEtherPrice() public view returns (uint256) {
+        (, int256 answer, , , ) = IAggregator(dataFeedAddress).latestRoundData();
+        return uint256(answer) * 1e10;
+    }
+
+    function checkCurrentPhase(uint256 _amount) private {
+        while (currentPhase < 2) {
+            if (block.timestamp > phases[currentPhase][2] || totalSold + _amount > phases[currentPhase][0]) {
+                currentPhase++;
+            } else {
+                break;
+            }
+        }
     }
 
 
